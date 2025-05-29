@@ -66,13 +66,25 @@ class CCTVViewer(QWidget):
             self.play_stream(video_url, "사용자입력")
 
     def get_cctv_list(self):
-        api_url = (
-            f"https://openapi.its.go.kr:9443/cctvInfo?apiKey={api_key}&type=ex"
-            f"&cctvType=1&minX=126.8&maxX=126.9&minY=36.7&maxY=37.0&getType=json"
-        )
+        api_key = "b226eb0b73d2424487a3928f519a9ea4"
+        api_url = f"https://openapi.its.go.kr:9443/cctvInfo?apiKey={api_key}&type=ex&cctvType=1&minX=124&maxX=130&minY=33&maxY=39&getType=json"
         response = requests.get(api_url)
         data = response.json()
-        return data['response']['data']
+
+        # 내가 보고싶은 CCTV 이름 리스트
+        target_names = [
+            "하동터널(순천1 1)", "부곡1교", "횡성대교시점", "[인천2]광교방음터널(인천2외부1)",
+            "광교방음터널(강릉외부1)", "광교방음터널(강릉5)", "광교방음터널(인천2)",
+            "[인천2]광교방음터널(인천2외부2)", "광교방음터널(인천2 5)", "싸리재", "싸리재1", "서초"
+        ]
+
+        # target_names 중 이름이 포함된 CCTV만 필터링
+        cctv_list = [
+            cctv for cctv in data['response']['data']
+            if any(name in cctv['cctvname'] for name in target_names)
+        ]
+
+        return cctv_list
 
     def play_stream(self, url, cctvname):
         print(f"\n🎥 재생할 CCTV URL: {url}")
@@ -95,3 +107,4 @@ class CCTVViewer(QWidget):
             self.worker.join()
             self.worker = None
         print("🛑 영상 중지됨")
+
