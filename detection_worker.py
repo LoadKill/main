@@ -6,6 +6,7 @@ import timm
 import logging
 from Detection.detector import load_model, detect_trucks, classify_truck_img
 from Detection.tracker import init_tracker, update_tracks
+from deep_sort_realtime.deepsort_tracker import DeepSort
 from Detection.db import init_db, is_already_saved, save_illegal_vehicle
 from Detection.utils import draw_tracks, match_with_track
 import onnxruntime
@@ -41,7 +42,7 @@ class DetectionWorker(threading.Thread):
         ])
 
         # 트래커 초기화
-        self.tracker = init_tracker()
+        self.tracker = DeepSort(max_age=10, n_init=3)
 
     def run(self):
         conn, cursor = init_db()
