@@ -63,9 +63,20 @@ def save_illegal_vehicle(frame, box, track_id, cursor, conn, cctvname=""):
     save_path = os.path.join(folder_path, filename)
     cv2.imwrite(save_path, roi, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
-    
-    db_path = os.path.join("Detection", "saved_illegal", date_str, filename)
+   # 전체 프레임에 박스 그려 저장
+    frame_with_box = frame.copy()
+    # 원본 박스 좌표로 그림 (margin 좌표 말고!)
+    x1_box, y1_box, x2_box, y2_box = map(int, box[:4])
+    cv2.rectangle(frame_with_box, (x1_box, y1_box), (x2_box, y2_box), (0, 0, 255), 3)  # 빨간 박스
 
+    # 원본이미지 저장 폴더 위치:/탐지 이미지/
+    original_path = os.path.join("탐지 이미지", date_str)
+    os.makedirs(original_path, exist_ok=True)
+    original_save_path = os.path.join(original_path, f"{cctvname}_{time_str}.jpg")
+    cv2.imwrite(original_save_path, frame_with_box, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    
+    #crop된 이미지 저장 폴더 위치:/Detection/saved_illegal
+    db_path = os.path.join("Detection", "saved_illegal", date_str, filename)
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
 
 
