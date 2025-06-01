@@ -4,11 +4,10 @@ import torch
 import torch.nn as nn
 import timm
 import logging
-from Detection.detector import load_model, detect_trucks, classify_truck_img
-from Detection.tracker import init_tracker, update_tracks
+from Detection.detector import load_model, detect_trucks
 from deep_sort_realtime.deepsort_tracker import DeepSort
 from Detection.db import init_db, is_already_saved, save_illegal_vehicle
-from Detection.utils import draw_tracks, match_with_track
+from Detection.utils import  match_with_track
 import onnxruntime
 from torchvision import transforms
 from PIL import Image
@@ -24,12 +23,12 @@ class DetectionWorker(threading.Thread):
         self.signals = signal_handler  # PyQt용 시그널 핸들러 등
 
         # YOLOv8 로드
-        self.model = load_model("yolov8_n.pt").to("cuda")  # !! 모델 경로 확인 필요 !!
+        self.model = load_model("Detection/model/yolov8_n.pt").to("cuda")  # !! 모델 경로 확인 필요 !!
         logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
         # 분류 모델 수정
         self.onnx_session = onnxruntime.InferenceSession(
-            'final_classification.onnx',  # !! 모델 경로 확인 필요 !!
+            'Detection/model/final_classification.onnx',  # !! 모델 경로 확인 필요 !!
             providers = ['CUDAExecutionProvider']
         )
 
@@ -41,7 +40,6 @@ class DetectionWorker(threading.Thread):
             transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
-        # 트래커 초기화
         self.tracker = DeepSort(max_age=10, n_init=3)
 
     def run(self):
@@ -59,16 +57,16 @@ class DetectionWorker(threading.Thread):
                 truck_boxes = detect_trucks(self.model, frame)
 
                 # 2. 트래킹
-                tracks = update_tracks(self.tracker, truck_boxes)
+                tracks = self.tracker.update_tracks(truck_boxes, frame=frame)
 
-                for box in truck_boxes:
-                    # 3. 트래킹 ID 매칭
-                    track_id = match_with_track(box, tracks)
-                    if track_id is None:
+                for track in tracks:
+                    if not track.is_confirmed():
                         continue
+                    # 3. 트래킹 ID 매칭
+                    track_id = track.track_id
 
                     # 4. 크롭
-                    x1, y1, x2, y2, _ = map(int, box)
+                    x1, y1, x2, y2 = map(int, track.to_ltrb())
                     roi = frame[y1:y2, x1:x2]
                     if roi.size == 0:
                         continue
@@ -80,7 +78,7 @@ class DetectionWorker(threading.Thread):
                     # 6. DB 저장
                     if label == 'illegal' and not is_already_saved(cursor, track_id):
                         print(f"[{self.cctvname}] 🚨 불법 차량 저장 (ID: {track_id})")
-                        save_illegal_vehicle(frame, box, track_id, cursor, conn, self.cctvname)
+                        save_illegal_vehicle(frame, track, track_id, cursor, conn, self.cctvname)
 
                         if self.signals:
                             self.signals.detection_made.emit()
@@ -94,6 +92,7 @@ class DetectionWorker(threading.Thread):
     def classify_onnx(self, image):
         pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         input_tensor = self.onnx_transform(pil_img).unsqueeze(0).numpy()
+        print('3')
 
         output = self.onnx_session.run(None, {self.onnx_input_name: input_tensor})
         logit = output[0][0][0]
