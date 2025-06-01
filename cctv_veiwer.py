@@ -28,11 +28,27 @@ class CCTVViewer(QWidget):
         self.button_layout = QVBoxLayout()
 
         self.cctv_list = self.get_cctv_list()
+        # 📌 시연 영상 URL 리스트
+        self.test_urls = [
+            "Detection/sample/bandicam 2025-05-15 14-21-50-048.mp4",  # 시연1 영상 URL 나중에 넣으면 됨용
+            "Detection/sample/bandicam 2025-05-28 10-48-03-117.mp4",  # 시연2
+            ""   # 시연3
+        ]
+
         for cctv in self.cctv_list[:10]:
             btn = QPushButton(cctv['cctvname'])
             btn.setFixedHeight(40)
             btn.clicked.connect(lambda _, url=cctv['cctvurl'], name=cctv['cctvname']: self.play_stream(url, name))
             self.button_layout.addWidget(btn)
+
+        for i in range(1, 4):
+            test_btn = QPushButton(f"시연{i}")
+            test_btn.setFixedHeight(40)
+            test_btn.clicked.connect(lambda _, url=self.test_urls[i-1], name=f"시연{i}": self.play_stream(url, name))
+            self.button_layout.addWidget(test_btn)
+
+        
+
 
         # 영상 출력용 프레임
         self.video_frame = QFrame()
@@ -85,6 +101,7 @@ class CCTVViewer(QWidget):
         ]
 
         return cctv_list
+
 
     def play_stream(self, url, cctvname):
         print(f"\n🎥 재생할 CCTV URL: {url}")
