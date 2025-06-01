@@ -32,8 +32,11 @@ def is_already_saved(cursor, track_id):
     return cursor.fetchone() is not None
 
 
-def save_illegal_vehicle(frame, box, track_id, cursor, conn, cctvname=""):
-    x1, y1, x2, y2, _ = map(int, box)
+def save_illegal_vehicle(frame, box_or_track, track_id, cursor, conn, cctvname=""):
+    if hasattr(box_or_track, "to_ltrb"):
+        x1, y1, x2, y2 = map(int, box_or_track.to_ltrb())
+    else:
+        x1, y1, x2, y2 = map(int, box_or_track)
     h, w = frame.shape[:2]
 
     # (선택) margin 조금 넓히기
@@ -66,7 +69,10 @@ def save_illegal_vehicle(frame, box, track_id, cursor, conn, cctvname=""):
    # 전체 프레임에 박스 그려 저장
     frame_with_box = frame.copy()
     # 원본 박스 좌표로 그림 (margin 좌표 말고!)
-    x1_box, y1_box, x2_box, y2_box = map(int, box[:4])
+    if hasattr(box_or_track, "to_ltrb"):
+        x1_box, y1_box, x2_box, y2_box = map(int, box_or_track.to_ltrb())
+    else:
+        x1_box, y1_box, x2_box, y2_box = map(int, box_or_track[:4])
     cv2.rectangle(frame_with_box, (x1_box, y1_box), (x2_box, y2_box), (0, 0, 255), 3)  # 빨간 박스
 
     # 원본이미지 저장 폴더 위치:/탐지 이미지/

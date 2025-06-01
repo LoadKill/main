@@ -9,15 +9,16 @@ def load_model(weight_path):
 
     return model
 
-def detect_trucks(model, frame, truck_class_id=1, conf_threshold=0.6):
-    results = model(frame, conf=conf_threshold)[0]
+def detect_trucks(model, frame, truck_class_id=1, conf_threshold=0.3, iou=0.3):
+    results = model(frame, conf=conf_threshold, iou=iou)[0]
     truck_boxes = []
     for box in results.boxes:
         cls_id = int(box.cls[0])
         if cls_id == truck_class_id:
             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+            w, h = x2 - x1, y2 - y1
             conf = float(box.conf[0])
-            truck_boxes.append([x1, y1, x2, y2, conf])
+            truck_boxes.append(([x1, y1, w, h], conf, cls_id))
     return truck_boxes
 
 def preprocess_for_classifier(img, input_size=224):
