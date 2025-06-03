@@ -2,7 +2,7 @@ import os
 import sys
 import requests
 import vlc
-from PyQt5.QtWidgets import QWidget, QPushButton, QVBoxLayout, QFrame, QInputDialog
+from PyQt5.QtWidgets import QWidget, QPushButton, QVBoxLayout, QFrame, QInputDialog, QLabel
 from PyQt5.QtCore import QObject, pyqtSignal
 from dotenv import load_dotenv
 
@@ -45,23 +45,25 @@ class CCTVViewer(QWidget):
             test_btn = QPushButton(f"시연{i}")
             test_btn.setFixedHeight(40)
             test_btn.clicked.connect(lambda _, url=self.test_urls[i-1], name=f"시연{i}": self.play_stream(url, name))
-            self.button_layout.addWidget(test_btn)
-
-        
+            self.button_layout.addWidget(test_btn)        
 
 
         # 영상 출력용 프레임
         self.video_frame = QFrame()
+        self.video_frame.setFixedHeight(500)
         self.video_frame.setStyleSheet("background-color: #000; border-radius: 24px;")
 
-        # 재생 및 중지 버튼
-        self.play_button = QPushButton("URL로 영상 재생")
-        self.play_button.setFixedHeight(40)
-        self.play_button.clicked.connect(self.prompt_for_video_url)
 
         self.stop_button = QPushButton("영상 끄기")
         self.stop_button.setFixedHeight(40)
         self.stop_button.clicked.connect(self.stop_stream)
+
+            # 👉 영상 설명란 (아래에 추가)
+        self.video_desc_label = QLabel("여기에 CCTV 영상에 대한 설명이 나옵니다.")
+        self.video_desc_label.setWordWrap(True)
+        self.video_desc_label.setStyleSheet("font-size: 15px; color: #333; background: #f5f5f5; padding: 6px; border-radius: 10px;")
+        self.video_desc_label.setMinimumHeight(36)
+        self.video_desc_label.setMaximumHeight(60)  # 2줄 정도
 
         # VLC 초기화
         self.instance = vlc.Instance()
