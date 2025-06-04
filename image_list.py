@@ -137,6 +137,16 @@ class ImageBrowserWidget(QWidget):
         layout = QVBoxLayout(self)
         self.setLayout(layout)
 
+        # 1. [필터 버튼] 영역
+        button_row = QHBoxLayout()
+        self.btn_all = QPushButton("전체")
+        self.btn_yes = QPushButton("적재불량(예)")
+        self.btn_no = QPushButton("정상(아니오)")
+        button_row.addWidget(self.btn_all)
+        button_row.addWidget(self.btn_yes)
+        button_row.addWidget(self.btn_no)
+        layout.addLayout(button_row)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         layout.addWidget(scroll)
@@ -147,58 +157,104 @@ class ImageBrowserWidget(QWidget):
         scroll.setWidget(content)
 
         self.items = []
+        self.all_db_rows = []
         self.image_paths = set()
         self.analysis_queue = []
         self.analysis_index = 0
         self.processing = False
 
+        # 버튼 이벤트 연결
+        self.btn_all.clicked.connect(lambda: self.refresh_list("all"))
+        self.btn_yes.clicked.connect(lambda: self.refresh_list("yes"))
+        self.btn_no.clicked.connect(lambda: self.refresh_list("no"))
+
         self.populate_image_items()
+        self.refresh_list("all")
 
     def populate_image_items(self):
+        # 모든 DB 데이터를 미리 다 불러와 저장 (필터링 시 다시 리스트 구성)
         conn, cursor = init_db()
         try:
-            cursor.execute("SELECT timestamp, image_path, cctvname FROM illegal_vehicles ORDER BY timestamp DESC")
-            for timestamp, path, cctvname in cursor.fetchall():
-                if not os.path.exists(path):
-                    continue
-                item = ImageListItem(timestamp, path, cctvname, self)
-                #item.setFixedHeight(100)
-                self.vbox.addWidget(item)
-                self.items.append(item)
-                self.analysis_queue.append(item)
-            self.vbox.addStretch()
-            self.run_next_analysis()
+            cursor.execute("SELECT timestamp, image_path, cctvname, analysis_result FROM illegal_vehicles ORDER BY timestamp DESC")
+            self.all_db_rows = [
+                (timestamp, path, cctvname, analysis_result)
+                for timestamp, path, cctvname, analysis_result in cursor.fetchall()
+                if os.path.exists(path)
+            ]
         finally:
             conn.close()
 
-    def add_new_image_item(self, timestamp, path, cctvname, to_top=True):
-        """새 이미지 감지(또는 DB에 추가)시 리스트에 동적으로 추가"""
-        if path in self.image_paths:    # 중복 방지
-            return
-        item = ImageListItem(timestamp, path, cctvname, self)
-        if to_top:
-            self.vbox.insertWidget(0, item)      # 최신 이미지는 맨 위에 추가
-            self.items.insert(0, item)
+    def refresh_list(self, mode="all"):
+        # 기존 아이템 clear (stretch도 함께 지워짐)
+        for i in reversed(range(self.vbox.count())):
+            item = self.vbox.itemAt(i)
+            widget = item.widget()
+            if widget is not None:
+                widget.setParent(None)
+            else:
+                self.vbox.removeItem(item)
+        self.items = []
+
+        # 필터에 맞는 데이터만 리스트에 추가
+        if mode == "all":
+            filtered = self.all_db_rows
+        elif mode == "yes":
+            filtered = [row for row in self.all_db_rows if row[3] and "적재불량 여부: 예" in row[3]]
+        elif mode == "no":
+            filtered = [row for row in self.all_db_rows if row[3] and "적재불량 여부: 아니오" in row[3]]
         else:
+            filtered = self.all_db_rows
+
+        for timestamp, path, cctvname, _ in filtered:
+            item = ImageListItem(timestamp, path, cctvname, self)
             self.vbox.addWidget(item)
             self.items.append(item)
-        self.image_paths.add(path)               # 중복 방지용 집합에 경로 등록
-        self.analysis_queue.append(item)
-        self.run_next_analysis()                 # 필요시 바로 분석
+
+        self.vbox.addStretch()
+
+        # (필요하다면) 분석 큐도 재설정
+        self.analysis_queue = self.items
+        self.analysis_index = 0
+        self.run_next_analysis()
 
 
     def handle_new_detection(self):
-        """새 탐지 발생(시그널)시 DB에서 가장 최근 이미지 하나만 추가"""
+        # 새 탐지 발생(시그널)시 DB에서 가장 최근 이미지 1개만 추가
         conn, cursor = init_db()
         try:
-            cursor.execute("SELECT timestamp, image_path, cctvname FROM illegal_vehicles ORDER BY timestamp DESC LIMIT 1")
+            cursor.execute(
+                "SELECT timestamp, image_path, cctvname, analysis_result FROM illegal_vehicles ORDER BY timestamp DESC LIMIT 1"
+            )
             row = cursor.fetchone()
             if row:
-                timestamp, path, cctvname = row
-                if os.path.exists(path):
-                    self.add_new_image_item(timestamp, path, cctvname)
+                timestamp, path, cctvname, analysis_result = row
+                # 이미 리스트에 있는지 확인 (image_path 또는 timestamp 비교)
+                for existing in self.all_db_rows:
+                    if existing[1] == path:
+                        return  # 이미 존재하면 추가하지 않음
+
+                # 새 이미지는 항상 전체 목록에는 추가
+                self.all_db_rows.insert(0, (timestamp, path, cctvname, analysis_result))
+
+                # 현재 필터(모드) 상태 가져오기 (없으면 "all"로)
+                current_mode = getattr(self, "last_mode", "all")
+
+                # 필터 조건에 맞으면 리스트에 추가
+                should_add = (
+                    current_mode == "all" or
+                    (current_mode == "yes" and analysis_result and "적재불량 여부: 예" in analysis_result) or
+                    (current_mode == "no" and analysis_result and "적재불량 여부: 아니오" in analysis_result)
+                )
+
+                if should_add:
+                    item = ImageListItem(timestamp, path, cctvname, self)
+                    self.vbox.insertWidget(0, item)
+                    self.items.insert(0, item)
+                    self.analysis_queue.insert(0, item)
+                    self.run_next_analysis()
         finally:
             conn.close()
+
 
 
     def run_next_analysis(self):
