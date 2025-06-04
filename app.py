@@ -5,11 +5,14 @@ from PyQt5.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout
 )
 from PyQt5.QtCore import Qt, QTimer, QObject, pyqtSignal
-
+from dotenv import load_dotenv
+import os
 from cctv_veiwer import CCTVViewer
 from image_list import ImageBrowserWidget
-from incident_slider import IncidentSlider
+from slider import IncidentSlider, WeatherSlider, get_weather_messages, load_incident_data
 
+load_dotenv()
+api_key = os.getenv('ITS_API_KEY')
 
 class WorkerSignals(QObject):
     detection_made = pyqtSignal()
@@ -35,7 +38,13 @@ class MainWindow(QWidget):
         video_layout = QVBoxLayout()
         video_layout.setAlignment(Qt.AlignTop)  # 중앙에 위로 붙이기
 
+
+
         # 2-1 슬라이드
+
+        self.weather_slider = WeatherSlider(width=self.cctv_viewer.video_frame.width())
+        video_layout.addWidget(self.weather_slider)
+
         self.incident_slider = IncidentSlider(
             width=self.cctv_viewer.video_frame.width()
         )
@@ -62,7 +71,7 @@ class MainWindow(QWidget):
         main_layout.addWidget(self.image_browser, 5)
 
         # 돌발 정보 메시지 로드 및 슬라이더에 세팅
-        self.incident_messages = self.load_incident_data()
+        self.incident_messages = load_incident_data()
         if not self.incident_messages:
             self.incident_messages = ["현재 돌발 교통 정보가 없습니다."]
         self.incident_slider.set_messages(self.incident_messages)
@@ -72,55 +81,29 @@ class MainWindow(QWidget):
         self.api_refresh_timer.timeout.connect(self.refresh_api_data)
         self.api_refresh_timer.start(1800 * 1000)  # 30분마다 API 갱신
 
+
+        # [날씨] 메시지 세팅 및 타이머
+        weather_msgs = get_weather_messages()
+        if not weather_msgs:
+            weather_msgs = ["현재 날씨 정보가 없습니다."]
+        self.weather_slider.set_messages(weather_msgs)
+
+        self.weather_timer = QTimer()
+        self.weather_timer.timeout.connect(self.refresh_weather_data)
+        self.weather_timer.start(3600 * 1000)
+
     def refresh_api_data(self):
-        self.incident_messages = self.load_incident_data()
+        self.incident_messages = load_incident_data()
         if not self.incident_messages:
             self.incident_messages = ["현재 돌발 교통 정보가 없습니다."]
         self.incident_slider.set_messages(self.incident_messages)
 
-    def load_incident_data(self):
-        api_key = "8637559074094717b79ee9d5cbcabb0c"
-        url = (
-            f"https://openapi.its.go.kr:9443/eventInfo"
-            f"?apiKey={api_key}&type=ex&eventType=all"
-            f"&minX=124&maxX=132&minY=33&maxY=39&getType=json"
-        )
+    def refresh_weather_data(self):
+        weather_msgs = get_weather_messages()
+        if not weather_msgs:
+            weather_msgs = ["현재 날씨 정보가 없습니다."]
+        self.weather_slider.set_messages(weather_msgs)
 
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
-            events = data.get("body", {}).get("items", [])
-            if not events:
-                return []
-
-            target_roads = ["남해선", "서해안선", "영동선", "경부선"]
-            today = datetime.now().date()
-            messages = []
-
-            for event in events:
-                road_name = event.get("roadName", "정보없음")
-                if road_name not in target_roads:
-                    continue
-
-                start_raw = event.get("startDate", "")
-                if not start_raw:
-                    continue
-
-                start_dt = datetime.strptime(start_raw, "%Y%m%d%H%M%S")
-                if start_dt.date() != today:
-                    continue
-
-                event_type = event.get("eventType", "정보없음")
-                msg = event.get("message", "정보없음")
-                time_str = f"{start_dt.month}월{start_dt.day}일 {start_dt.hour:02d}:{start_dt.minute:02d}"
-
-                messages.append(f"[{road_name}][{event_type}] {msg} ({time_str})")
-
-            return messages
-
-        except Exception as e:
-            return [f"[API 오류] {str(e)}"]
 
     def closeEvent(self, event):
         if self.cctv_viewer.worker:
