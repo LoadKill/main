@@ -12,7 +12,13 @@ import onnxruntime
 from torchvision import transforms
 from PIL import Image
 import numpy as np
+from PyQt5.QtCore import QObject, pyqtSignal
+from datetime import datetime
+import uuid
 
+
+class WorkerSignals(QObject):
+    image_saved = pyqtSignal(str)
 
 class DetectionWorker(threading.Thread):
     def __init__(self, stream_url, cctvname, signal_handler=None):
@@ -21,6 +27,7 @@ class DetectionWorker(threading.Thread):
         self.cctvname = cctvname
         self.running = True
         self.signals = signal_handler  # PyQt용 시그널 핸들러 등
+        self.session_uid = str(uuid.uuid4())[:8]
 
         # YOLOv8 로드
         self.model = load_model("Detection/model/yolov8_n.pt").to("cuda")  # !! 모델 경로 확인 필요 !!
@@ -43,6 +50,7 @@ class DetectionWorker(threading.Thread):
         self.tracker = DeepSort(max_age=10, n_init=3)
 
     def run(self):
+
         conn, cursor = init_db()
         cap = cv2.VideoCapture(self.stream_url)
         print(f"[{self.cctvname}] 스트림 시작")
@@ -51,7 +59,7 @@ class DetectionWorker(threading.Thread):
             while self.running and cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
-                    continue
+                    continue 
 
                 # 1. 트럭 감지
                 truck_boxes = detect_trucks(self.model, frame)
@@ -64,24 +72,30 @@ class DetectionWorker(threading.Thread):
                         continue
                     # 3. 트래킹 ID 매칭
                     track_id = track.track_id
+                    unique_id = f"{self.session_uid}_{track_id}"
 
                     # 4. 크롭
                     x1, y1, x2, y2 = map(int, track.to_ltrb())
                     roi = frame[y1:y2, x1:x2]
                     if roi.size == 0:
                         continue
+
                     
                     # 5. 분류
                     label = self.classify_onnx(roi)
-                    print(f"[{self.cctvname}] 분류 결과: {label} / ID: {track_id}")
+                    print('label:', label)
+                    print('is_already_saved:', is_already_saved(cursor, unique_id))
 
                     # 6. DB 저장
-                    if label == 'illegal' and not is_already_saved(cursor, track_id):
+                    if label == 'illegal' and not is_already_saved(cursor, unique_id):
                         print(f"[{self.cctvname}] 🚨 불법 차량 저장 (ID: {track_id})")
-                        save_illegal_vehicle(frame, track, track_id, cursor, conn, self.cctvname)
-
-                        if self.signals:
-                            self.signals.detection_made.emit()
+                        def notify_image_saved(image_path):
+                            if self.signals:
+                                self.signals.image_saved.emit(image_path)
+                        try:
+                            save_illegal_vehicle(frame, track, unique_id, cursor, conn, self.cctvname, on_save_callback=notify_image_saved)
+                        except Exception as e:
+                            print('[❌ 저장 실패]', e)
 
         finally:
             cap.release()
@@ -92,7 +106,6 @@ class DetectionWorker(threading.Thread):
     def classify_onnx(self, image):
         pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
         input_tensor = self.onnx_transform(pil_img).unsqueeze(0).numpy()
-        print('3')
 
         output = self.onnx_session.run(None, {self.onnx_input_name: input_tensor})
         logit = output[0][0][0]

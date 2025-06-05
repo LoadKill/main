@@ -13,7 +13,8 @@ def init_db():
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS illegal_vehicles (
-        track_id INTEGER PRIMARY KEY,
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        track_id TEXT,
         timestamp TEXT,
         class TEXT,
         x1 INTEGER, y1 INTEGER, x2 INTEGER, y2 INTEGER,
@@ -27,12 +28,12 @@ def init_db():
 
 
 
-def is_already_saved(cursor, track_id):
-    cursor.execute("SELECT 1 FROM illegal_vehicles WHERE track_id=?", (track_id,))
+def is_already_saved(cursor, unique_id):
+    cursor.execute("SELECT 1 FROM illegal_vehicles WHERE track_id=?", (unique_id,))
     return cursor.fetchone() is not None
 
 
-def save_illegal_vehicle(frame, box_or_track, track_id, cursor, conn, cctvname=""):
+def save_illegal_vehicle(frame, box_or_track, unique_id, cursor, conn, cctvname="", on_save_callback=None):
     if hasattr(box_or_track, "to_ltrb"):
         x1, y1, x2, y2 = map(int, box_or_track.to_ltrb())
     else:
@@ -62,7 +63,7 @@ def save_illegal_vehicle(frame, box_or_track, track_id, cursor, conn, cctvname="
     folder_path = os.path.join("Detection", "saved_illegal", date_str)
     os.makedirs(folder_path, exist_ok=True)
 
-    filename = f"illegal_{track_id}_{time_str}.jpg"
+    filename = f"illegal_{unique_id}_{time_str}.jpg"
     save_path = os.path.join(folder_path, filename)
     cv2.imwrite(save_path, roi, [cv2.IMWRITE_JPEG_QUALITY, 95])
 
@@ -89,7 +90,10 @@ def save_illegal_vehicle(frame, box_or_track, track_id, cursor, conn, cctvname="
     cursor.execute("""
         INSERT INTO illegal_vehicles (track_id, timestamp, class, x1, y1, x2, y2, image_path, cctvname, analysis_result)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (track_id, timestamp, 'illegal', x1, y1, x2, y2, db_path, cctvname, None))
+    """, (unique_id, timestamp, 'illegal', x1, y1, x2, y2, db_path, cctvname, None))
     conn.commit()
 
     print(f"[✅ 저장 완료] {db_path}")
+
+    if on_save_callback:
+        on_save_callback(db_path)
