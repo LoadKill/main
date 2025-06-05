@@ -18,6 +18,7 @@ google_api_key = os.getenv('GOOGLE_API_KEY')
 
 class WorkerSignals(QObject):
     detection_made = pyqtSignal()
+    image_saved = pyqtSignal(str)
 
 
 class CCTVViewer(QWidget):
@@ -114,6 +115,7 @@ class CCTVViewer(QWidget):
             cctv for cctv in data['response']['data']
             if any(name in cctv['cctvname'] for name in target_names)
         ]
+        
         return cctv_list
 
     def get_address_from_coord(self, lat, lng):

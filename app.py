@@ -16,6 +16,7 @@ api_key = os.getenv('ITS_API_KEY')
 
 class WorkerSignals(QObject):
     detection_made = pyqtSignal()
+    image_saved = pyqtSignal(str)
 
 
 class MainWindow(QWidget):
@@ -66,8 +67,9 @@ class MainWindow(QWidget):
         main_layout.addLayout(video_layout, 5)
 
         # 3️⃣ 오른쪽: 이미지 탐지 결과
+        
         self.image_browser = ImageBrowserWidget()
-        self.signals.detection_made.connect(self.image_browser.handle_new_detection)
+        self.signals.image_saved.connect(self.image_browser.handle_new_detection)
         main_layout.addWidget(self.image_browser, 5)
 
         # 돌발 정보 메시지 로드 및 슬라이더에 세팅

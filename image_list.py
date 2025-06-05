@@ -24,6 +24,8 @@ class AnalyzeWorker(QThread):
 
 
 class ImageListItem(QWidget):
+    analysis_finished = pyqtSignal()
+
     def __init__(self, timestamp, path, cctvname, parent):
         super().__init__()
         self.parent_widget = parent
@@ -90,18 +92,24 @@ class ImageListItem(QWidget):
     def start_analysis(self):
         if self.analysis_running or self.analysis_result:
             return
-        
-        print(f"[QThread] 분석 스레드 시작: {self.image_path}")
-    
-        conn, cursor = init_db()
 
+        real_path = self.image_path
+        print(f"[분석 시작] 이미지 경로: {real_path}")
+
+        conn, cursor = init_db()
         try:
-            cursor.execute("SELECT analysis_result FROM illegal_vehicles WHERE image_path = ?", (self.image_path,))
+            cursor.execute("SELECT analysis_result FROM illegal_vehicles WHERE image_path = ?", (real_path,))
             row = cursor.fetchone()
+            print("DB 결과:", row)
+
             if row and row[0]:
                 self.analysis_result = row[0]
-                self.preview_label.setText(row[0].strip().splitlines()[0])
-                return  # 🔹 이미 분석된 결과가 있으므로 여기서 종료
+                first_line = row[0].strip().splitlines()[0]
+                print("불러온 분석 요약:", first_line)
+                self.preview_label.setText(first_line)
+
+                self.analysis_finished.emit()
+                return
         finally:
             conn.close()
 
@@ -114,7 +122,7 @@ class ImageListItem(QWidget):
         self.worker.start()
 
     def analysis_done(self, result):
-        print(f"[QThread] 분석 스레드 종료: {self.image_path}")
+
         self.analysis_result = result
         self.analysis_running = False
         first_line = result.strip().splitlines()[0] if result else "(결과 없음)"
@@ -127,6 +135,8 @@ class ImageListItem(QWidget):
             conn.commit()
         finally:
             conn.close()
+
+        self.analysis_finished.emit()
 
     def toggle_expand(self):
         self.parent_widget.collapse_all_except(self)
@@ -183,14 +193,19 @@ class ImageBrowserWidget(QWidget):
         self.analysis_queue = []
         self.analysis_index = 0
         self.processing = False
+        self.current_filter = "all"
 
         # 버튼 이벤트 연결
-        self.btn_all.clicked.connect(lambda: self.refresh_list("all"))
-        self.btn_yes.clicked.connect(lambda: self.refresh_list("yes"))
-        self.btn_no.clicked.connect(lambda: self.refresh_list("no"))
+        self.btn_all.clicked.connect(lambda: self.set_filter_mode("all"))
+        self.btn_yes.clicked.connect(lambda: self.set_filter_mode("yes"))
+        self.btn_no.clicked.connect(lambda: self.set_filter_mode("no"))
 
         self.populate_image_items()
         self.refresh_list("all")
+
+    def set_filter_mode(self, mode):
+        self.current_filter = mode
+        self.refresh_list(mode)
 
     def populate_image_items(self):
         # 모든 DB 데이터를 미리 다 불러와 저장 (필터링 시 다시 리스트 구성)
@@ -239,59 +254,35 @@ class ImageBrowserWidget(QWidget):
         self.run_next_analysis()
 
 
-    def handle_new_detection(self):
-        # 새 탐지 발생(시그널)시 DB에서 가장 최근 이미지 1개만 추가
-        conn, cursor = init_db()
-        try:
-            cursor.execute(
-                "SELECT timestamp, image_path, cctvname, analysis_result FROM illegal_vehicles ORDER BY timestamp DESC LIMIT 1"
-            )
-            row = cursor.fetchone()
-            if row:
-                timestamp, path, cctvname, analysis_result = row
-                # 이미 리스트에 있는지 확인 (image_path 또는 timestamp 비교)
-                for existing in self.all_db_rows:
-                    if existing[1] == path:
-                        return  # 이미 존재하면 추가하지 않음
 
-                # 새 이미지는 항상 전체 목록에는 추가
-                self.all_db_rows.insert(0, (timestamp, path, cctvname, analysis_result))
+    def handle_new_detection(self, image_path):
+        self.populate_image_items()
+        self.refresh_list(self.current_filter)
 
-                # 현재 필터(모드) 상태 가져오기 (없으면 "all"로)
-                current_mode = getattr(self, "last_mode", "all")
 
-                # 필터 조건에 맞으면 리스트에 추가
-                should_add = (
-                    current_mode == "all" or
-                    (current_mode == "yes" and analysis_result and "적재불량 여부: 예" in analysis_result) or
-                    (current_mode == "no" and analysis_result and "적재불량 여부: 아니오" in analysis_result)
-                )
-
-                if should_add:
-                    item = ImageListItem(timestamp, path, cctvname, self)
-                    self.vbox.insertWidget(0, item)
-                    self.items.insert(0, item)
-                    self.analysis_queue.insert(0, item)
-                    self.run_next_analysis()
-        finally:
-            conn.close()
 
 
 
     def run_next_analysis(self):
-        if self.processing or self.analysis_index >= len(self.analysis_queue):
+        # 1) 이미 분석 중이거나 큐가 비어 있으면 그대로 종료
+        if self.processing or not self.analysis_queue:
             return
 
         self.processing = True
-        item = self.analysis_queue[self.analysis_index]
+        # 2) 큐 맨 앞에서 꺼내서 분석 대상 설정
+        item = self.analysis_queue.pop(0)  
 
-        def process():
-            item.start_analysis()
-            self.analysis_index += 1
+        def on_finished():
+            print(f"[✔] 분석 완료: {item.image_path}")
+            # 3) 분석 완료 후 재귀적으로 다음 항목 호출
             self.processing = False
-            QTimer.singleShot(100, self.run_next_analysis)
+            item.analysis_finished.disconnect(on_finished)
+            QTimer.singleShot(0, self.run_next_analysis)
 
-        QTimer.singleShot(10, process)
+        print(f"[▶] 분석 시작: {item.image_path}")
+        item.analysis_finished.connect(on_finished)
+        item.start_analysis()
+
 
     def collapse_all_except(self, current_item):
         for item in self.items:
