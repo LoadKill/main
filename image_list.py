@@ -3,11 +3,25 @@ from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea,
     QPushButton, QTextEdit, QFrame
 )
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap
 
 from Detection.db import init_db
 from chatbot import analyze_image
+
+
+class AnalyzeWorker(QThread):
+    finished = pyqtSignal(str)
+
+    def __init__(self, img_path):
+        super().__init__()
+        self.img_path = img_path
+
+    def run(self):
+        from chatbot import analyze_image
+        result = analyze_image(self.img_path)
+        self.finished.emit(result)
+
 
 class ImageListItem(QWidget):
     def __init__(self, timestamp, path, cctvname, parent):
@@ -77,6 +91,8 @@ class ImageListItem(QWidget):
         if self.analysis_running or self.analysis_result:
             return
         
+        print(f"[QThread] 분석 스레드 시작: {self.image_path}")
+    
         conn, cursor = init_db()
 
         try:
@@ -92,20 +108,25 @@ class ImageListItem(QWidget):
         self.analysis_running = True
         self.preview_label.setText("🧠 분석 중...")
 
-        result = analyze_image(self.image_path)
-        print(result)
+        # 🔵 QThread로 analyze_image 비동기 실행!
+        self.worker = AnalyzeWorker(self.image_path)
+        self.worker.finished.connect(self.analysis_done)
+        self.worker.start()
+
+    def analysis_done(self, result):
+        print(f"[QThread] 분석 스레드 종료: {self.image_path}")
         self.analysis_result = result
         self.analysis_running = False
         first_line = result.strip().splitlines()[0] if result else "(결과 없음)"
         self.preview_label.setText(first_line)
 
+        # DB에 분석결과 저장
         conn, cursor = init_db()
         try:
             cursor.execute("UPDATE illegal_vehicles SET analysis_result = ? WHERE image_path = ?", (result, self.image_path))
             conn.commit()
         finally:
             conn.close()
-
 
     def toggle_expand(self):
         self.parent_widget.collapse_all_except(self)
