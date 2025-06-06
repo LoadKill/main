@@ -1,4 +1,6 @@
 import os
+import sys
+import subprocess
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QScrollArea,
     QPushButton, QTextEdit, QFrame
@@ -28,20 +30,23 @@ class ImageListItem(QWidget):
 
     def __init__(self, timestamp, path, cctvname, parent):
         super().__init__()
+
+        self.setFixedWidth(400)
         self.parent_widget = parent
         self.image_path = path
         self.is_expanded = False
         self.analysis_result = None
         self.analysis_running = False
 
-        self.setFixedWidth(400)
 
+
+        # 메인 레이아웃
         self.main_layout = QVBoxLayout(self)
         self.setLayout(self.main_layout)
         self.main_layout.setSpacing(5)
         self.main_layout.setContentsMargins(5, 5, 5, 5)
 
-        # 썸네일 + 제목
+       # 썸네일 + 제목 + 삭제 버튼 한 줄
         top_row = QHBoxLayout()
         self.thumbnail = QLabel()
         self.thumbnail.setFixedSize(60, 40)
@@ -98,6 +103,7 @@ class ImageListItem(QWidget):
         expand_layout.addLayout(btn_row)
         self.main_layout.addWidget(self.expand_frame)
 
+
         # [핵심 추가] 생성시 분석 결과가 있으면 즉시 preview_label에 표시
         from Detection.db import init_db
         conn, cursor = init_db()
@@ -110,6 +116,7 @@ class ImageListItem(QWidget):
                 self.analysis_result = row[0]
         finally:
             conn.close()
+
 
     def request_delete(self):
         """부모에게 삭제 요청 신호 emit"""
@@ -230,6 +237,25 @@ class ImageBrowserWidget(QWidget):
 
         self.populate_image_items()
         self.refresh_list("all")
+
+        # 아래에 폴더 열기 버튼 추가
+        self.open_folder_button = QPushButton("탐지 이미지 폴더 열기")
+        self.open_folder_button.setStyleSheet("font-size: 13px; padding: 8px;")
+        self.open_folder_button.clicked.connect(self.open_detected_folder)
+        layout.addWidget(self.open_folder_button)
+
+    def open_detected_folder(self):
+        folder_path = "탐지 이미지"  # 실제 탐지 이미지 폴더 경로로 맞추세요
+        abs_path = os.path.abspath(folder_path)
+        if not os.path.exists(abs_path):
+            os.makedirs(abs_path)  # 폴더 없으면 생성
+
+        if sys.platform.startswith('darwin'):      # macOS
+            subprocess.call(['open', abs_path])
+        elif os.name == 'nt':                      # Windows
+            os.startfile(abs_path)
+        elif os.name == 'posix':                   # Linux
+            subprocess.call(['xdg-open', abs_path])
 
     def load_all_images_from_db(self):
         conn, cursor = init_db()
