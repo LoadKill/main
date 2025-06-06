@@ -7,7 +7,6 @@ from PyQt5.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt5.QtGui import QPixmap
 
 from Detection.db import init_db
-from chatbot import analyze_image
 
 
 class AnalyzeWorker(QThread):
@@ -25,6 +24,7 @@ class AnalyzeWorker(QThread):
 
 class ImageListItem(QWidget):
     analysis_finished = pyqtSignal()
+    delete_requested = pyqtSignal(str)
 
     def __init__(self, timestamp, path, cctvname, parent):
         super().__init__()
@@ -57,8 +57,15 @@ class ImageListItem(QWidget):
         self.header.setStyleSheet("padding: 5px; background: transparent;")
         self.header.mousePressEvent = lambda event: self.toggle_expand()
 
+        self.top_delete_button = QPushButton("삭제")
+        self.top_delete_button.setStyleSheet("color: red; font-size: 12px; padding: 3px;")
+        self.top_delete_button.setFixedWidth(48)
+        self.top_delete_button.clicked.connect(self.request_delete)
+
         top_row.addWidget(self.thumbnail)
         top_row.addWidget(self.header)
+        top_row.addWidget(self.top_delete_button)
+
         self.main_layout.addLayout(top_row)
 
         # 요약
@@ -83,14 +90,16 @@ class ImageListItem(QWidget):
         self.close_button = QPushButton("닫기")
         self.close_button.clicked.connect(self.collapse)
 
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self.close_button)
+
         expand_layout.addWidget(self.image_label)
         expand_layout.addWidget(self.chat_display)
-        expand_layout.addWidget(self.close_button)
-
+        expand_layout.addLayout(btn_row)
         self.main_layout.addWidget(self.expand_frame)
 
         # [핵심 추가] 생성시 분석 결과가 있으면 즉시 preview_label에 표시
-        from Detection.db import init_db  # 경로 주의
+        from Detection.db import init_db
         conn, cursor = init_db()
         try:
             cursor.execute("SELECT analysis_result FROM illegal_vehicles WHERE image_path = ?", (self.image_path,))
@@ -101,6 +110,10 @@ class ImageListItem(QWidget):
                 self.analysis_result = row[0]
         finally:
             conn.close()
+
+    def request_delete(self):
+        """부모에게 삭제 요청 신호 emit"""
+        self.delete_requested.emit(self.image_path)
 
     def start_analysis(self):
         if self.analysis_running or self.analysis_result:
@@ -270,6 +283,7 @@ class ImageBrowserWidget(QWidget):
 
         for timestamp, path, cctvname, _ in filtered:
             item = ImageListItem(timestamp, path, cctvname, self)
+            item.delete_requested.connect(self.delete_image_item)
             self.vbox.addWidget(item)
             self.items.append(item)
             item.start_analysis()
@@ -310,6 +324,27 @@ class ImageBrowserWidget(QWidget):
             if path == image_path:
                 self.all_db_rows[idx] = (timestamp, path, cctvname, new_result)
                 break
+
+    def delete_image_item(self, image_path):
+        # 1. DB에서 삭제
+        conn, cursor = init_db()
+        try:
+            cursor.execute("DELETE FROM illegal_vehicles WHERE image_path = ?", (image_path,))
+            conn.commit()
+        finally:
+            conn.close()
+        # 2. 실제 파일 삭제
+        if os.path.exists(image_path):
+            try:
+                os.remove(image_path)
+            except Exception as e:
+                print(f"파일 삭제 실패: {e}")
+
+        # 3. 메모리에서 제거
+        self.all_db_rows = [row for row in self.all_db_rows if row[1] != image_path]
+
+        # 4. 리스트 새로고침
+        self.refresh_list(self.current_filter)
 
     def run_next_analysis(self):
         if self.processing or not self.analysis_queue:
